@@ -1,0 +1,62 @@
+services:
+  # 1. Redis (Broker para o Celery)
+  redis:
+    image: redis:7-alpine
+    container_name: uptime_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - uptime-net
+
+  # 2. FastAPI (Backend)
+  api:
+    build: .
+    container_name: uptime_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:///./uptime.db
+    depends_on:
+      - redis
+    networks:
+      - uptime-net
+
+  # 3. Celery Worker
+  worker:
+    build: .
+    container_name: uptime_celery_worker
+    command: celery -A celery_worker.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:///./uptime.db
+    depends_on:
+      - redis
+    networks:
+      - uptime-net
+
+  # 4. Streamlit (Dashboard)
+  dashboard:
+    build: .
+    container_name: uptime_dashboard
+    command: streamlit run dashboard.py --server.address=0.0.0.0 --server.port=8501
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:///./uptime.db
+    depends_on:
+      - api
+    networks:
+      - uptime-net
+
+networks:
+  uptime-net:
+    driver: bridge
