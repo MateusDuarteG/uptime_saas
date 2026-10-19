@@ -13,3 +13,9 @@ plotly>=7.1.0
 python-dotenv>=1.2.1
 streamlit>=1.29.0
 pandas>=2.0.4
+bcrypt
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+pydantic[email]
+requests

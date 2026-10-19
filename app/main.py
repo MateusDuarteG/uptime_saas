@@ -1,6 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, HttpUrl
+from fastapi.security import OAuth2PasswordRequestForm
+from app.auth import verify_password, create_access_token
+from app.auth import get_password_hash
+from app.schemas import Token
 import uuid
 
 from app.database import get_db, engine, Base
@@ -241,3 +245,40 @@ def admin_overview(admin_key: str, db: Session = Depends(get_db)):
         "total_logs_recorded": total_logs,
         "tenants": tenants_data
     }
+
+@app.post("/token", response_model=Token)
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # O form_data usa 'username' para o campo de login (vamos aceitar o e-mail nele)
+    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="E-mail ou senha incorretos",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(data={"sub": user.email})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/api/v1/create-first-user")
+def create_first_user(email: str, password: str, tenant_id: str, db: Session = Depends(get_db)):
+    try:
+        t_uuid = uuid.UUID(tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="UUID da empresa é inválido!")
+
+    # Verifica se a empresa existe
+    tenant = db.query(models.Tenant).filter(models.Tenant.id == t_uuid).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Empresa (Tenant) não encontrada com este ID.")
+
+    hashed_pwd = get_password_hash(password)
+    new_user = models.User(
+        email=email,
+        hashed_password=hashed_pwd,
+        tenant_id=t_uuid
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"message": "Usuário criado com sucesso!", "email": new_user.email}
