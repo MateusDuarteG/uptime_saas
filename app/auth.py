@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -13,19 +13,20 @@ SECRET_KEY = os.getenv("SECRET_KEY", "sua_chave_secreta_super_segura_aqui_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 horas
 
-# Configuração explícita do passlib para usar bcrypt com segurança
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # Garante corte de segurança de 72 bytes do bcrypt
-    encoded_password = plain_password.encode('utf-8')[:72]
-    return pwd_context.verify(encoded_password, hashed_password)
+    # Codifica para bytes, respeitando o limite de 72 bytes do bcrypt
+    password_bytes = plain_password.encode('utf-8')[:72]
+    hashed_bytes = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 def get_password_hash(password: str) -> str:
-    # Trunca a senha em 72 bytes para evitar o erro do bcrypt
-    encoded_password = password.encode('utf-8')[:72]
-    return pwd_context.hash(encoded_password)
+    # Gera o hash diretamente usando o bcrypt nativo
+    password_bytes = password.encode('utf-8')[:72]
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
