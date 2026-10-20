@@ -1,4 +1,6 @@
+from celery import Celery
 from datetime import datetime
+from celery.schedules import crontab
 import os
 import time
 from celery import Celery
@@ -41,5 +43,33 @@ def trigger_webhook_alert(
   except Exception as e:
     print(f"Erro ao disparar webhook: {e}")
 
+# Instância do Celery com Redis como Broker e Result Backend
+celery_app = Celery(
+    "saas_monitoring",
+    broker="redis://localhost:6379/0",
+    backend="redis://localhost:6379/0"
+)
 
-# ... (o restante do código do celery_app e da task continua igualzinho você já mandou)
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="America/Sao_Paulo",
+    enable_utc=True,
+)
+
+# Agendamento Periódico (Celery Beat)
+celery_app.conf.beat_schedule = {
+    "run-checks-every-minute": {
+        "task": "tasks.check_all_active_monitors",
+        "schedule": 60.0,  # Executa a cada 60 segundos (1 minuto)
+    },
+}
+
+# No seu celery_worker.py, mude a instância do Celery para:
+celery_app = Celery(
+    "saas_monitoring",
+    broker="redis://localhost:6379/0",
+    backend="redis://localhost:6379/0",
+    include=["app.tasks"] # <-- Adiciona esta linha para o worker achar as tarefas dentro de app/
+)

@@ -2,6 +2,9 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, HttpUrl
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from app.auth import SECRET_KEY, ALGORITHM  # Certifique-se de que SECRET_KEY e ALGORITHM estão acessíveis em app.auth
 from app.auth import verify_password, create_access_token
 from app.auth import get_password_hash
 from app.schemas import Token
@@ -9,6 +12,8 @@ import uuid
 
 from app.database import get_db, engine, Base
 from app import models
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Cria as tabelas no banco automaticamente ao iniciar
 Base.metadata.create_all(bind=engine)
@@ -282,3 +287,73 @@ def create_first_user(email: str, password: str, tenant_id: str, db: Session = D
     db.commit()
     db.refresh(new_user)
     return {"message": "Usuário criado com sucesso!", "email": new_user.email}
+
+@app.post("/api/v1/monitors", response_model=MonitorResponse, status_code=status.HTTP_201_CREATED)
+def create_monitor(
+    monitor_data: MonitorCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    # O tenant_id é pego automaticamente do usuário autenticado no token JWT!
+    tenant = db.query(models.Tenant).filter(models.Tenant.id == current_user.tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant não encontrado.")
+
+    current_monitors_count = db.query(models.Monitor).filter(
+        models.Monitor.tenant_id == tenant.id
+    ).count()
+
+    if current_monitors_count >= tenant.max_monitors:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Limite do plano atingido! Seu plano ({tenant.plan_type}) permite no máximo {tenant.max_monitors} monitores."
+        )
+
+    if monitor_data.interval_seconds < tenant.min_interval_seconds:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"O intervalo mínimo de checagem para o seu plano é de {tenant.min_interval_seconds} segundos."
+        )
+
+    new_monitor = models.Monitor(
+        tenant_id=tenant.id,
+        name=monitor_data.name,
+        url=str(monitor_data.url),
+        check_type=monitor_data.check_type,
+        interval_seconds=monitor_data.interval_seconds
+    )
+
+    db.add(new_monitor)
+    db.commit()
+    db.refresh(new_monitor)
+
+    return new_monitor
+
+
+@app.get("/api/v1/monitors", response_model=list[MonitorResponse])
+def list_monitors(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    # Retorna apenas os monitores pertencentes à empresa (tenant) do usuário logado
+    monitors = db.query(models.Monitor).filter(models.Monitor.tenant_id == current_user.tenant_id).all()
+    return monitors
+
+def get_current_active_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> models.User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Credenciais de autenticação inválidas",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+        
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if user is None or not user.is_active:
+        raise credentials_exception
+    return user

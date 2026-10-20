@@ -28,6 +28,25 @@ if "token" not in st.session_state:
 if "user_email" not in st.session_state:
     st.session_state["user_email"] = None
 
+def get_auth_headers():
+    token = st.session_state.get("token")
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}
+
+def api_get_monitors(t_id):
+    try:
+        headers = get_auth_headers()
+        response = requests.get(f"{API_URL}/monitors", params={"tenant_id": t_id}, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 401:
+            st.error("🔒 Sessão expirada ou não autorizada. Faça login novamente.")
+        elif response.status_code == 404:
+            st.error("❌ Locatário não encontrado no banco de dados.")
+    except requests.exceptions.ConnectionError:
+        st.error("🚨 Não foi possível conectar à API FastAPI.")
+    return []
 
 # --- FUNÇÕES AUXILIARES ---
 def get_latency_logs(monitor_id):
@@ -49,17 +68,6 @@ def get_latency_logs(monitor_id):
     finally:
         db.close()
 
-
-def api_get_monitors(t_id):
-    try:
-        response = requests.get(f"{API_URL}/monitors", params={"tenant_id": t_id})
-        if response.status_code == 200:
-            return response.json()
-        elif response.status_code == 404:
-            st.error("❌ Locatário não encontrado no banco de dados.")
-    except requests.exceptions.ConnectionError:
-        st.error("🚨 Não foi possível conectar à API FastAPI.")
-    return []
 
 
 # --- SIDEBAR: NAVEGAÇÃO & SESSÃO ---
@@ -111,6 +119,10 @@ if menu == "Entrar / Criar Conta":
                             data = response.json()
                             st.session_state["token"] = data["access_token"]
                             st.session_state["user_email"] = email_input
+                            
+                            # Opcional: Se a sua rota /token ou /users/me retornar o tenant_id, salve-o aqui:
+                            # st.session_state["tenant_id"] = data.get("tenant_id", "c6abfa80-a6d1-447f-87a3-2ac1633f2a86")
+                            
                             st.success("🎉 Login realizado com sucesso!")
                             st.rerun()
                         else:
